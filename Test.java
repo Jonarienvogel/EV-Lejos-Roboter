@@ -11,6 +11,7 @@ import lejos.robotics.chassis.Wheel;
 import lejos.robotics.chassis.WheeledChassis;
 import lejos.robotics.navigation.MovePilot;
 import lejos.utility.Delay;
+import lejos.hardware.sensor.EV3ColorSensor;
 
 public class Test {
 
@@ -21,7 +22,11 @@ public class Test {
     static EV3GyroSensor gyroSensor = new EV3GyroSensor(SensorPort.S3);
     static SampleProvider gyroAngle = gyroSensor.getAngleMode();
     static float[] angleSample = new float[gyroAngle.sampleSize()];
-
+    
+    static EV3ColorSensor colorSensor = new EV3ColorSensor(SensorPort.S2);
+    static SampleProvider colorStrength = colorSensor.getAmbientMode();
+    static float[] colorSample = new float[colorStrength.sampleSize()];
+    
     static EV3LargeRegulatedMotor whipMotor = new EV3LargeRegulatedMotor(MotorPort.A);
     static EV3MediumRegulatedMotor left = new EV3MediumRegulatedMotor(MotorPort.B);
     static EV3LargeRegulatedMotor right = new EV3LargeRegulatedMotor(MotorPort.D);
@@ -37,8 +42,8 @@ public class Test {
 
         whipMotor.setSpeed(whipMotor.getMaxSpeed());
         whipMotor.setAcceleration(6000);
-        pilot.setLinearSpeed(90);
-        pilot.setAngularSpeed(120);
+        pilot.setLinearSpeed(120);
+        pilot.setAngularSpeed(140);
 
         gyroSensor.reset();
         Delay.msDelay(500);
@@ -163,6 +168,13 @@ public class Test {
                         e.printStackTrace();
                     }
                 }
+                 
+                if (wandHintenErkennung() < 0.1) {
+                    LCD.drawString("Wand hinten!", 0, 4);
+                    pilot.travel(30);
+                    pilot.rotate((Math.random() > 0.5 ? 50 : -50));
+                    Delay.msDelay(200);
+                }
             }
 
             // Blockadeerkennung (z.B. vor Wand)
@@ -180,7 +192,7 @@ public class Test {
 
             lastDistance = currentDistance;
             Delay.msDelay(50);
-        }
+        } 
     }
 
     public static float getDistance() {
@@ -193,7 +205,7 @@ public class Test {
         return angleSample[0];
     }
 
-    // Die geänderte peitscheSchlag Methode mit Async und Timeout:
+    // peitscheSchlag Methode mit Async und Timeout:
     public static void peitscheSchlag(EV3LargeRegulatedMotor motor) {
         motor.rotate(-250, true);  // true = nicht blockieren
         waitForMotor(motor, 1500);
@@ -211,6 +223,11 @@ public class Test {
             }
             Delay.msDelay(10);
         }
+    }
+    
+    public static float wandHintenErkennung() {
+    	colorStrength.fetchSample(colorSample, 0);
+        return colorSample[0];
     }
 
     public static void cleanup() {
