@@ -1,11 +1,11 @@
-import lejos.hardware.motor.EV3MediumRegulatedMotor;
-import lejos.hardware.motor.EV3LargeRegulatedMotor;
-import lejos.hardware.port.MotorPort;
-import lejos.hardware.port.SensorPort;
 import lejos.hardware.Button;
 import lejos.hardware.lcd.LCD;
+import lejos.hardware.motor.EV3LargeRegulatedMotor;
+import lejos.hardware.motor.EV3MediumRegulatedMotor;
+import lejos.hardware.port.MotorPort;
+import lejos.hardware.port.SensorPort;
+import lejos.hardware.sensor.EV3GyroSensor;
 import lejos.hardware.sensor.EV3UltrasonicSensor;
-import lejos.hardware.sensor.EV3ColorSensor;
 import lejos.robotics.SampleProvider;
 import lejos.robotics.chassis.Wheel;
 import lejos.robotics.chassis.WheeledChassis;
@@ -14,115 +14,168 @@ import lejos.utility.Delay;
 
 public class Test {
 
-    // Sensoren
-    static EV3UltrasonicSensor usSensor = new EV3UltrasonicSensor(SensorPort.S2);
+    static EV3UltrasonicSensor usSensor = new EV3UltrasonicSensor(SensorPort.S4);
     static SampleProvider usDistance = usSensor.getDistanceMode();
     static float[] usSample = new float[usDistance.sampleSize()];
 
-    static EV3ColorSensor rgbSensor = new EV3ColorSensor(SensorPort.S1);
-    static SampleProvider rgb = rgbSensor.getRGBMode();
-    static float[] rgbSample = new float[rgb.sampleSize()];
+    static EV3GyroSensor gyroSensor = new EV3GyroSensor(SensorPort.S3);
+    static SampleProvider gyroAngle = gyroSensor.getAngleMode();
+    static float[] angleSample = new float[gyroAngle.sampleSize()];
+
+    static EV3LargeRegulatedMotor whipMotor = new EV3LargeRegulatedMotor(MotorPort.A);
+    static EV3MediumRegulatedMotor left = new EV3MediumRegulatedMotor(MotorPort.B);
+    static EV3LargeRegulatedMotor right = new EV3LargeRegulatedMotor(MotorPort.D);
+
+    static Wheel wheel1 = WheeledChassis.modelWheel(left, -5.6).offset(-13);
+    static Wheel wheel2 = WheeledChassis.modelWheel(right, 5.6).offset(13);
+    static MovePilot pilot = new MovePilot(new WheeledChassis(new Wheel[]{wheel1, wheel2}, WheeledChassis.TYPE_DIFFERENTIAL));
 
     public static void main(String[] args) {
+        LCD.clear();
+        LCD.drawString("ENTER Start", 0, 0);
+        Button.ENTER.waitForPress();
+
+        whipMotor.setSpeed(whipMotor.getMaxSpeed());
+        whipMotor.setAcceleration(6000);
+        pilot.setLinearSpeed(90);
+        pilot.setAngularSpeed(120);
+
+        gyroSensor.reset();
+        Delay.msDelay(500);
+        LCD.clear();
+
+        float lastDistance = getDistance();
         int stuckCounter = 0;
         int suchCounter = 0;
 
-        EV3LargeRegulatedMotor whipMotor = new EV3LargeRegulatedMotor(MotorPort.A);
-        whipMotor.setSpeed(whipMotor.getMaxSpeed());
-        whipMotor.setAcceleration(6000);
-
-        EV3MediumRegulatedMotor left = new EV3MediumRegulatedMotor(MotorPort.B);
-        EV3LargeRegulatedMotor right = new EV3LargeRegulatedMotor(MotorPort.D);
-
-        Wheel wheel1 = WheeledChassis.modelWheel(left, -5.6).offset(-13);
-        Wheel wheel2 = WheeledChassis.modelWheel(right, 5.6).offset(13);
-        MovePilot pilot = new MovePilot(new WheeledChassis(new Wheel[]{wheel1, wheel2}, WheeledChassis.TYPE_DIFFERENTIAL));
-        pilot.setLinearSpeed(90);
-        pilot.setAngularSpeed(140);
-
-        System.out.println("Drücke ENTER zum Starten");
-        Button.ENTER.waitForPress();
-
-        float lastDistance = getUltrasonicDistance();
-        
         while (true) {
-
             if (Button.ESCAPE.isDown()) {
-                System.out.println("Beende Programm.");
-                cleanup(whipMotor, left, right);
+                cleanup();
                 System.exit(0);
-                break;
-            }
-            
-            if (Button.DOWN.isDown()) {
-            	peitscheSchlag(whipMotor);
             }
 
-            // Rot erkennen
-            if (erkenneRotHSV()) {
+            float currentDistance = getDistance();
+
+            LCD.clear();
+            LCD.drawString("Distanz: " + String.format("%.2f", currentDistance), 0, 0);
+
+            // Gegnererkennung: Abstand plötzlich viel kleiner
+            if (lastDistance - currentDistance > 0.15 && currentDistance < 0.4) {
+                LCD.drawString("Gegner erkannt!", 0, 1);
                 pilot.travel(-10);
-                peitscheSchlag(whipMotor);
-                System.out.println("ROT!");
-                pilot.travel(-20);
-                suchCounter = 0; // Reset Suche
-            }
-
-            float currentDistance = getUltrasonicDistance();
-
-            // Gegner erkannt?
-            if (lastDistance - currentDistance > 0.1 && currentDistance < 0.2) {
-                System.out.println("Gegner erkannt bei " + currentDistance + " m");
-                pilot.travel(15);
                 Delay.msDelay(50);
-
-                if (erkenneRotHSV()) {
-                    pilot.travel(-10);
-                    peitscheSchlag(whipMotor);
-                    System.out.println("ROT!");
-                }
-                suchCounter = 0; // Reset Suche
+                peitscheSchlag(whipMotor);
+                suchCounter = 0;
+                Delay.msDelay(500);
             } else {
-                // Gegner nicht gefunden — Suchbewegung
+                // Zufällige Bewegung zur Suche
                 suchCounter++;
-                System.out.println("Suche... Versuch " + suchCounter + ", Abstand: " + currentDistance);
+                float angleBefore = getGyroAngle();
+                int randomAngle = (int)(Math.random() * 100 - 50);
+                pilot.rotate(randomAngle);
 
-                pilot.rotate((int) (Math.random() * 140 - 70));
-
-                if (erkenneRotHSV()) {
-                    System.out.println("ROT!");
+                // Prüfen ob Rotation erfolgreich war (Gyro)
+                float angleAfter = getGyroAngle();
+                float rotated = Math.abs(angleAfter - angleBefore);
+                if (rotated < 5) {
+                    LCD.drawString("Seite blockiert!", 0, 2);
                     pilot.travel(-10);
-                    peitscheSchlag(whipMotor);
-                    suchCounter = 0;
+                    pilot.rotate((Math.random() > 0.5 ? 90 : -90));
+                    Delay.msDelay(200);
                 }
 
-                if ((Math.random() <= 0.4) && currentDistance > 0.15) {
+                if (Math.random() <= 0.5 && currentDistance > 0.15) {
                     pilot.travel(15);
                 }
 
-                // Nach 7 erfolglosen Suchen
-                if (suchCounter >= 7) {
-                    System.out.println("Nichts gefunden DREH");
-                    pilot.travel(-20);
+                if (suchCounter >= 5) {
                     suchCounter = 0;
-                    pilot.setAngularSpeed(240);
-                    pilot.rotate(1080);
-                    pilot.setAngularSpeed(120);
+
+                    Thread peitschenThread1 = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            peitscheSchlag(whipMotor);
+                        }
+                    });
+
+                    peitschenThread1.start();
+
+                    pilot.rotate(70);    // Erst +70°
+                    Delay.msDelay(100);
+
+                    try {
+                        peitschenThread1.join();  // Warten bis fertig
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    Thread peitschenThread2 = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            peitscheSchlag(whipMotor);
+                        }
+                    });
+
+                    peitschenThread2.start();
+
+                    pilot.rotate(-140);  // Dann -140° ergibt -70° vom Start
+                    Delay.msDelay(100);
+
+                    try {
+                        peitschenThread2.join();  // Warten bis fertig
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    Thread peitschenThread3 = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            peitscheSchlag(whipMotor);
+                        }
+                    });
+
+                    peitschenThread3.start();
+
+                    pilot.rotate(70);    // Erst +70°
+                    Delay.msDelay(100);
+
+                    try {
+                        peitschenThread3.join();  // Warten bis fertig
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    Thread peitschenThread4 = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            peitscheSchlag(whipMotor);
+                        }
+                    });
+
+                    peitschenThread4.start();
+
+                    pilot.rotate(-140);  // Dann -140° ergibt -70° vom Start
+                    Delay.msDelay(100);
+
+                    try {
+                        peitschenThread4.join();  // Warten bis fertig
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
                 }
             }
 
-            // Wand-Block-Check
+            // Blockadeerkennung (z.B. vor Wand)
             if (Math.abs(currentDistance - lastDistance) < 0.01 && currentDistance < 0.1) {
                 stuckCounter += 50;
                 if (stuckCounter >= 4000) {
-                    System.out.println("Blockiert Wand ");
                     pilot.travel(-20);
                     pilot.rotate((Math.random() > 0.5 ? 90 : -90));
                     stuckCounter = 0;
-                    suchCounter = 0; // Reset auch hier
+                    suchCounter = 0;
                 }
             } else {
                 stuckCounter = 0;
-                
             }
 
             lastDistance = currentDistance;
@@ -130,84 +183,41 @@ public class Test {
         }
     }
 
-
-    // ==== Sensor- & Aktionsmethoden ====
-
-    public static float getUltrasonicDistance() {
+    public static float getDistance() {
         usDistance.fetchSample(usSample, 0);
         return usSample[0];
     }
 
-    /**
-     * Liest RGB vom EV3-Farbsensor, wandelt in HSV um und prüft auf roten Farbton.
-     * @return true, wenn ein heller Rottone erkannt wird.
-     */
-    
-    public static boolean erkenneRotHSV() {
-        // 3 Messungen mitteln
-    	rgb.fetchSample(rgbSample, 0);
-        float r = rgbSample[0];
-        float g = rgbSample[1];
-        float b = rgbSample[2];
-
-        // HSV-Berechnung
-        float max = Math.max(r, Math.max(g, b));
-        float min = Math.min(r, Math.min(g, b));
-        float delta = max - min;
-
-        float h;
-        if (delta == 0) {
-            h = 0;
-        } else if (max == r) {
-            h = 60 * (((g - b) / delta) % 6);
-        } else if (max == g) {
-            h = 60 * (((b - r) / delta) + 2);
-        } else {
-            h = 60 * (((r - g) / delta) + 4);
-        }
-        if (h < 0) h += 360;
-
-        float s = (max == 0) ? 0 : (delta / max);
-        float v = max;
-
-        // Roterkennung
-        boolean istRot = ( (h < 40 || h > 240) && s > 0.2 && v >= 0.0039 );
-
-        // Anzeige auf dem EV3-Screen
-        LCD.clear();
-        LCD.drawString(String.format(""), 0, 0);
-        LCD.drawString(String.format("H: %.1f", h), 0, 1);
-        LCD.drawString(String.format("S: %.2f", s), 0, 2);
-        LCD.drawString(String.format("V: %.5f", v), 0, 3);
-        LCD.drawString("ROT: " + (istRot ? "JA" : "NEIN"), 0, 5);
-        Delay.msDelay(100);
-        return istRot;
+    public static float getGyroAngle() {
+        gyroAngle.fetchSample(angleSample, 0);
+        return angleSample[0];
     }
 
-
-  
-
+    // Die geänderte peitscheSchlag Methode mit Async und Timeout:
     public static void peitscheSchlag(EV3LargeRegulatedMotor motor) {
-    	
-        motor.backward();
-        Delay.msDelay(600);
-        motor.stop();
-        motor.rotate(290);
-        motor.stop();
+        motor.rotate(-250, true);  // true = nicht blockieren
+        waitForMotor(motor, 1500);
 
+        motor.rotate(250, true);
+        waitForMotor(motor, 1500);
     }
 
-    public static void peitscheEinfahren(EV3LargeRegulatedMotor motor) {
-        motor.rotate(-280);
-        motor.stop();
+    private static void waitForMotor(EV3LargeRegulatedMotor motor, long timeoutMs) {
+        long start = System.currentTimeMillis();
+        while (motor.isMoving()) {
+            if (System.currentTimeMillis() - start > timeoutMs) {
+                motor.stop();
+                break;
+            }
+            Delay.msDelay(10);
+        }
     }
 
-    public static void cleanup(EV3LargeRegulatedMotor whipMotor, EV3MediumRegulatedMotor left, EV3LargeRegulatedMotor right) {
+    public static void cleanup() {
         whipMotor.close();
         left.close();
         right.close();
         usSensor.close();
-        rgbSensor.close();
-
+        gyroSensor.close();
     }
 }
